@@ -18,6 +18,14 @@ resources:
             path: ./bronze_layer.py
         - file:
             path: ./silver_layer.py
+        - file:
+            path: ./gold_layer.py
+ 
+      # Gold layer's dim_date uses the 'holidays' package
+      environment:
+        dependencies:
+          - holidays
+
 
       # Pipeline configuration (Spark configs passed to pipeline code)
       configuration:
