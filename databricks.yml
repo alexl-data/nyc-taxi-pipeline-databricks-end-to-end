@@ -1,0 +1,22 @@
+# ============================================================================
+# Databricks Asset Bundle - NYC Taxi Medallion Pipeline
+# ============================================================================
+
+bundle:
+  name: nyc_taxi_pipeline
+
+resources:
+  pipelines:
+    nyc_taxi_medallion_pipeline:
+      name: "nyc_taxi_pipeline_dev"
+      serverless: true
+      catalog: nyc_taxi
+      target: nyc_taxi_dev
+
+      libraries:
+        - file:
+            path: ./bronze_layer.py
+
+      # Pipeline configuration (Spark configs passed to pipeline code)
+      configuration:
+        "bronze.schema_location": "/Volumes/nyc_taxi/nyc_taxi_dev/pipeline_checkpoints/bronze_schema"
