@@ -1,18 +1,133 @@
 # ============================================================================
 # Databricks Asset Bundle - NYC Taxi Medallion Pipeline
 # ============================================================================
+# Design Decisions:
+#
+# 1. Separate Dev/Prod Targets:
+#    - Isolated Unity Catalog schemas (nyc_taxi_dev / nyc_taxi_prod)
+#    - Triggered mode in both: Pipelines run on-demand (cost-efficient)
+#    - Production has scheduled job for daily runs
+#
+# 2. Serverless Pipeline:
+#    - serverless: true → No cluster management needed
+#    - Auto-scaling, pay-per-use
+#    - Ideal for production: Elasticity + cost efficiency
+#
+# 3. Pipeline + Job Orchestration:
+#    - Pipeline: Data processing logic (Bronze → Silver → Gold)
+#    - Job: Scheduled trigger + alerting on failures
+#    - Separation of concerns: Pipeline = logic, Job = orchestration
+#
+# 4. Notifications on Job Failure:
+#    - Email alerts to data engineering team
+#    - Fast incident response
+#    - Production best practice
+#
+# 5. Channel Variables for Environment Isolation:
+#    - ${bundle.target}: Injects "dev" or "prod" into names
+#    - Avoids hardcoding environments
+#    - Simplifies multi-environment deployment
+#
+# 6. Triggered Mode (continuous: false):
+#    - Dev: Run manually for testing (cost-efficient during development)
+#    - Prod: Triggered via scheduled job (daily at 2 AM)
+#    - Note: Use continuous: true only for real-time streaming use cases
+#      where data arrives constantly and needs immediate processing
+#
+# 7. Event Log Publishing:
+#    - event_log: Top-level pipeline field (not in configuration)
+#    - Publishes event log as queryable Unity Catalog table
+#    - Table name: <catalog>.<schema>.event_log
+#    - Contains execution metrics, data quality results, lineage
+#    - Enables direct SQL queries without needing pipeline UUID
+#
+# 8. Full Refresh Strategy:
+#    - Default: full_refresh: false (incremental processing)
+#    - Set to true: Deletes checkpoints and reprocesses all data
+#    - Use cases: Schema-breaking changes, bug fixes, architecture changes
+# ============================================================================
 
 bundle:
   name: nyc_taxi_pipeline
 
+# ============================================================================
+# DEVELOPMENT TARGET
+# ============================================================================
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://dbc-4bec34d5-b4c7.cloud.databricks.com
+    
+    variables:
+      catalog: nyc_taxi
+      schema: nyc_taxi_dev
+      email_notifications: "dev-alerts@example.com" # this is just an anonymous placeholder
+      bronze_schema_location: "/Volumes/nyc_taxi/nyc_taxi_dev/pipeline_checkpoints/bronze_schema"
+    
+    resources:
+      pipelines:
+        nyc_taxi_medallion_pipeline:
+          # Development: Triggered mode (run manually when needed)
+          # More cost-efficient than continuous mode during development
+          continuous: false
+          development: true
+          
+      jobs:
+        nyc_taxi_orchestration_job:
+          # Development: No production alerts needed
+          email_notifications:
+            on_failure:
+              - ${var.email_notifications}
+
+# ============================================================================
+# PRODUCTION TARGET
+# ============================================================================
+  prod:
+    mode: production
+    workspace:
+      host: https://dbc-4bec34d5-b4c7.cloud.databricks.com
+    
+    variables:
+      catalog: nyc_taxi
+      schema: nyc_taxi_prod
+      email_notifications: "prod-alerts@example.com" # this is just an anonymous placeholder
+      bronze_schema_location: "/Volumes/nyc_taxi/nyc_taxi_prod/pipeline_checkpoints/bronze_schema"
+    
+    resources:
+      pipelines:
+        nyc_taxi_medallion_pipeline:
+          # Production: Triggered mode (via scheduled job)
+          # Pipeline runs when job triggers it (daily at 2 AM)
+          continuous: false
+          development: false
+          
+      jobs:
+        nyc_taxi_orchestration_job:
+          # Production: Extended alerting strategy
+          email_notifications:
+            on_failure:
+              - ${var.email_notifications}
+            on_success:
+              - ${var.email_notifications}
+
+# ============================================================================
+# PIPELINE DEFINITION
+# ============================================================================
 resources:
   pipelines:
     nyc_taxi_medallion_pipeline:
-      name: "nyc_taxi_pipeline_dev"
+      name: "nyc_taxi_pipeline_${bundle.target}"
+      
+      # Serverless compute for elastic scaling
       serverless: true
-      catalog: nyc_taxi
-      target: nyc_taxi_dev
-
+      
+      # Unity Catalog target (using dedicated 'nyc_taxi' catalog)
+      catalog: ${var.catalog}
+      target: ${var.schema}  # Tables written to nyc_taxi.<schema>.table_name
+      
+      # Pipeline source files (Bronze → Silver → Gold)
       libraries:
         - file:
             path: ./bronze_layer.py
@@ -20,13 +135,101 @@ resources:
             path: ./silver_layer.py
         - file:
             path: ./gold_layer.py
- 
-      # Gold layer's dim_date uses the 'holidays' package
+      
+      # Python dependencies for Serverless Pipeline
       environment:
         dependencies:
           - holidays
-
-
+      
       # Pipeline configuration (Spark configs passed to pipeline code)
       configuration:
-        "bronze.schema_location": "/Volumes/nyc_taxi/nyc_taxi_dev/pipeline_checkpoints/bronze_schema"
+        # Pass catalog/schema to pipeline code
+        "catalog": "${var.catalog}"
+        "schema": "${var.schema}"
+        
+        # Environment-specific schema location for Auto Loader checkpoints
+        # Ensures dev/prod isolation (prevents schema evolution conflicts)
+        "bronze.schema_location": "${var.bronze_schema_location}"
+      
+      # Event log publishing to Unity Catalog
+      # Creates a queryable table: <catalog>.<schema>.event_log
+      # Contains pipeline execution metrics, data quality results, lineage
+      event_log:
+        catalog: ${var.catalog}
+        schema: ${var.schema}
+        name: event_log
+      
+      # Data quality monitoring
+      # Expectations from silver_layer.py are automatically tracked
+      # Event log shows: Passed / Failed / Dropped records
+      # Unity Catalog lineage shows data quality flow
+        
+      # Notifications for pipeline failures
+      notifications:
+        - email_recipients:
+            - ${var.email_notifications}
+          alerts:
+            - "on-update-failure"
+            - "on-flow-failure"
+
+# ============================================================================
+# JOB DEFINITION (Orchestration)
+# ============================================================================
+  jobs:
+    nyc_taxi_orchestration_job:
+      name: "nyc_taxi_orchestration_${bundle.target}"
+      
+      # Job schedule: Daily at 2 AM (after data landing)
+      # For demo/dev: Comment out schedule to run manually
+      schedule:
+        quartz_cron_expression: "0 0 2 * * ?"
+        timezone_id: "America/New_York"
+        pause_status: "PAUSED"  # Start paused for demo - unpause for production
+      
+      # Job tasks
+      tasks:
+        - task_key: run_medallion_pipeline
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.nyc_taxi_medallion_pipeline.id}
+            
+            # Full Refresh: false = incremental (processes only new data)
+            #               true = reprocess all data (deletes checkpoints)
+            # Use true for: Schema changes, bug fixes, pipeline architecture changes
+            full_refresh: false
+          
+          # Timeout: 2 hours for complete pipeline run
+          timeout_seconds: 7200
+      
+      # Email alerts on failure (overridden per target)
+      email_notifications:
+        on_failure:
+          - ${var.email_notifications}
+      
+      # Max concurrent runs: Prevents race conditions
+      max_concurrent_runs: 1
+      
+      # Tags for monitoring/cost tracking
+      tags:
+        project: "nyc_taxi_analytics"
+        environment: "${bundle.target}"
+        team: "data_engineering"
+
+# ============================================================================
+# VARIABLES (Overridden per Target)
+# ============================================================================
+variables:
+  catalog:
+    description: "Unity Catalog for pipeline tables"
+    default: "nyc_taxi"
+  
+  schema:
+    description: "Schema name for environment isolation"
+    default: "nyc_taxi_dev"
+  
+  email_notifications:
+    description: "Email for job/pipeline notifications"
+    default: "dev-alerts@example.com"
+  
+  bronze_schema_location:
+    description: "Auto Loader schema checkpoint location (environment-specific to prevent dev/prod conflicts)"
+    default: "/Volumes/nyc_taxi/nyc_taxi_dev/pipeline_checkpoints/bronze_schema"
