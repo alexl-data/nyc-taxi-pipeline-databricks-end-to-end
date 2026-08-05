@@ -16,6 +16,8 @@ resources:
       libraries:
         - file:
             path: ./bronze_layer.py
+        - file:
+            path: ./silver_layer.py
 
       # Pipeline configuration (Spark configs passed to pipeline code)
       configuration:
