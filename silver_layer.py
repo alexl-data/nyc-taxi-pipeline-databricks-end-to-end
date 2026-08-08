@@ -8,16 +8,16 @@ Design Decisions:
    - expect_or_drop: Rejects invalid rows (better data quality in Gold)
    - expect: Would only warn but let bad data through
    - For production: Better to have less but clean data
-   
+
 2. Expectations documented as separate functions:
    - Each rule has a name and constraint
    - Metrics are visible in Unity Catalog Event Log
-   
+
 3. Streaming vs. Batch pattern:
    - silver_taxi_trips: Streaming table (@dp.table + dp.readStream)
    - silver_taxi_zones: Materialized view (@dp.materialized_view + dp.read)
    - Best Practice: Match decorator to data source type
-   
+
 4. Calculated columns (trip_duration_minutes, speed_mph):
    - Business logic centrally defined in Silver
    - Gold layer can directly access them
@@ -41,13 +41,18 @@ from transformations import calculate_trip_metrics, standardize_trip_schema
 )
 @dp.expect_or_drop("valid_trip_distance", "trip_distance > 0 AND trip_distance < 1000")
 @dp.expect_or_drop("valid_fare", "fare_amount > 0 AND fare_amount < 10000")
-@dp.expect_or_drop("valid_passenger_count", "passenger_count > 0 AND passenger_count <= 8")
+@dp.expect_or_drop(
+    "valid_passenger_count", "passenger_count > 0 AND passenger_count <= 8"
+)
 @dp.expect_or_drop("valid_timestamps", "pickup_datetime < dropoff_datetime")
-@dp.expect_or_drop("no_nulls_in_key_fields", "pickup_datetime IS NOT NULL AND dropoff_datetime IS NOT NULL")
+@dp.expect_or_drop(
+    "no_nulls_in_key_fields",
+    "pickup_datetime IS NOT NULL AND dropoff_datetime IS NOT NULL",
+)
 def silver_taxi_trips() -> DataFrame:
     """
     Cleaned and validated trip data with business logic.
-    
+
     Quality Rules:
     - Distance: 0 < trip_distance < 1000 miles
     - Fare: 0 < fare_amount < $10,000
@@ -55,18 +60,22 @@ def silver_taxi_trips() -> DataFrame:
     - Time logic: pickup before dropoff
     - No nulls in key timestamp fields
 
-    
+
     Returns:
         DataFrame with clean trips + calculated columns
     """
-    bronze_df = spark.readStream.table("bronze_taxi_trips")  # Streaming! Maintains streaming chain from Bronze
-    
+    bronze_df = spark.readStream.table(
+        "bronze_taxi_trips"
+    )  # Streaming! Maintains streaming chain from Bronze
+
     return (
         bronze_df
         # Apply reusable transformations (testable business logic)
-        .transform(standardize_trip_schema)   # Normalize column names from raw schema
-        .transform(calculate_trip_metrics)    # Calculate duration, speed, date/time fields
-        
+        .transform(
+            standardize_trip_schema
+        ).transform(  # Normalize column names from raw schema
+            calculate_trip_metrics
+        )  # Calculate duration, speed, date/time fields
         # Select final schema (standardized for downstream)
         .select(
             "vendor_id",
@@ -83,14 +92,12 @@ def silver_taxi_trips() -> DataFrame:
             "trip_duration_minutes",
             "speed_mph",
             "_ingestion_timestamp",
-            "_source_file"
+            "_source_file",
         )
-        
         # Watermark: Limit State Store growth for deduplication
         # Allows late data up to 2 days - balances Auto Loader discovery delays
         # with realistic duplicate window (month-boundary overlaps)
         .withWatermark("pickup_datetime", "2 days")
-        
         # Deduplication based on pickup time, vendor and location
         # (Databricks dataset may have duplicates across files)
         # Watermark ensures State Store doesn't grow unbounded in production
@@ -106,16 +113,16 @@ def silver_taxi_trips() -> DataFrame:
 def silver_taxi_zones() -> DataFrame:
     """
     Dimension table for taxi zones (batch/static reference data).
-    
+
     Design Notes:
     - Materialized View (not streaming) - zones are relatively static
     - Gold layer uses AUTO CDC FROM SNAPSHOT for SCD Type 2 history
     - No Change Data Feed needed - snapshot-based CDC works for batch sources
     - Bronze keeps raw column names (LocationID, Borough, Zone)
     - Silver standardizes to lowercase snake_case (location_id, borough, zone)
-    
+
     Data Source: bronze_taxi_zones (from Databricks taxizone dataset)
-    
+
     Returns:
         DataFrame with zone dimensions (standardized column names)
     """
@@ -130,6 +137,6 @@ def silver_taxi_zones() -> DataFrame:
             "borough",
             "zone",
             F.col("service_zone"),  # Already lowercase in Bronze
-            "_ingestion_timestamp"
+            "_ingestion_timestamp",
         )
     )
