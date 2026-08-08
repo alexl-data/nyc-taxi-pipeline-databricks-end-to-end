@@ -28,15 +28,12 @@ Design Decisions:
    - Trade-off: late data beyond 2 days won't be deduplicated (acceptable risk)
 """
 
-from pyspark.sql import DataFrame
 import pyspark.sql.functions as F
 from pyspark import pipelines as dp
+from pyspark.sql import DataFrame
 
 # Import reusable transformation functions (testable business logic)
-from transformations import (
-    standardize_trip_schema,
-    calculate_trip_metrics
-)
+from transformations import calculate_trip_metrics, standardize_trip_schema
 
 
 @dp.table(

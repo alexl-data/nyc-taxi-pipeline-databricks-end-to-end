@@ -42,9 +42,9 @@ Design Decisions:
    - Use cases: Schema changes, bug fixes in transformation logic, pipeline architecture changes
 """
 
-from pyspark.sql import DataFrame
 import pyspark.sql.functions as F
 from pyspark import pipelines as dp
+from pyspark.sql import DataFrame
 
 
 @dp.table(

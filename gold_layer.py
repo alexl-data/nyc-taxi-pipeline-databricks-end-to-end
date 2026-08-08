@@ -35,16 +35,21 @@ Design Decisions:
 
 """
 
-from pyspark.sql import DataFrame
-import pyspark.sql.functions as F
-from pyspark.sql.types import StructType, StructField, DateType, IntegerType, StringType, BooleanType
-from pyspark import pipelines as dp
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
 import holidays as holidays_lib
+import pyspark.sql.functions as F
+from pyspark import pipelines as dp
+from pyspark.sql import DataFrame
+from pyspark.sql.types import (
+    IntegerType,
+    StringType,
+    StructField,
+    StructType,
+)
 
 # Import reusable transformation functions (testable business logic)
-from transformations import enrich_with_pickup_zone, aggregate_daily_revenue_by_zone
-
+from transformations import aggregate_daily_revenue_by_zone, enrich_with_pickup_zone
 
 # ============================================================================
 # DIMENSION: Date Dimension (Static)
@@ -97,8 +102,8 @@ def dim_date() -> DataFrame:
         DataFrame with one row per date
     """
     # Generate date range: 2019-01-01 to 2024-12-31 (aligned with data source)
-    start_date = datetime(2019, 1, 1)
-    end_date = datetime(2024, 12, 31)
+    start_date = datetime(2019, 1, 1, tzinfo=timezone.utc)
+    end_date = datetime(2024, 12, 31, tzinfo=timezone.utc)
     date_range = [(start_date + timedelta(days=x),) for x in range((end_date - start_date).days + 1)]
     
     # Create DataFrame with date column

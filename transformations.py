@@ -15,8 +15,8 @@ This demonstrates Software Engineering maturity beyond Data Engineering:
 - Changes to logic automatically flow through to tests
 """
 
-from pyspark.sql import DataFrame
 import pyspark.sql.functions as F
+from pyspark.sql import DataFrame
 
 
 def calculate_trip_metrics(df: DataFrame) -> DataFrame:

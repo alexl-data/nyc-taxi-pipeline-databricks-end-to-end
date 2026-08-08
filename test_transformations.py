@@ -17,22 +17,27 @@ Design Decisions:
 These tests would run in the CI workflow (.github/workflows/ci.yml).
 """
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
-from datetime import datetime, timedelta
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import (
-    StructType, StructField, StringType, DoubleType, 
-    IntegerType, TimestampType
+    DoubleType,
+    IntegerType,
+    StringType,
+    StructField,
+    StructType,
+    TimestampType,
 )
 
 # Import actual production code (testable business logic)
 from transformations import (
-    calculate_trip_metrics,
-    standardize_trip_schema,
+    aggregate_daily_revenue_by_zone,
     apply_data_quality_filters,
+    calculate_trip_metrics,
     enrich_with_pickup_zone,
-    aggregate_daily_revenue_by_zone
+    standardize_trip_schema,
 )
 
 
@@ -70,7 +75,7 @@ def sample_trip_data(spark):
         StructField("dropoff_location_id", IntegerType(), True),
     ])
     
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     
     data = [
         # Valid trips
@@ -167,7 +172,7 @@ def test_schema_standardization(spark):
         StructField("DOLocationID", StringType(), True),
     ])
     
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
     
     raw_data = [
@@ -371,7 +376,7 @@ def test_zero_duration_trips_handled(spark):
         StructField("dropoff_datetime", TimestampType(), True),
     ])
     
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     data = [(5.0, now, now)]  # Same pickup and dropoff time
     
     df = spark.createDataFrame(data, schema)
