@@ -1,0 +1,116 @@
+# ============================================================================
+# CI Workflow - Continuous Integration
+# ============================================================================
+# Save this file as: .github/workflows/ci.yml
+#
+# Design Decisions:
+#
+# 1. Trigger on Pull Requests:
+#    - Prevents broken code in main branch
+#    - Code review + automated tests before merge
+#    - Quality gate for production deployments
+#
+# 2. Bundle Validate:
+#    - databricks bundle validate checks YAML syntax
+#    - Checks resource references (pipeline IDs, job configs)
+#    - Early error detection
+#
+# 3. Python Linting (ruff):
+#    - PEP 8 compliance for code quality and style
+#
+# 4. Unit Tests (pytest):
+#    - Tests for business logic (e.g., trip_duration calculation)
+#    - Isolated tests without Databricks cluster
+#
+# 5. No Databricks Deployment in CI:
+#    - CI: Only validation, no state changes
+#    - CD: Deployment to dev/prod (separate workflow)
+# ============================================================================
+
+name: CI - Validate and Test
+
+on:
+  pull_request:
+    branches:
+      - main
+      
+jobs:
+  validate:
+    name: Validate Bundle Configuration
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Setup Databricks CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+      
+      - name: Validate Bundle Syntax
+        run: |
+          databricks bundle validate --target dev
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+  
+  lint:
+    name: Python Code Linting
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install Linting Tools
+        run: |
+          pip install ruff black
+      
+      - name: Run Ruff Linter
+        run: |
+          ruff check *.py
+      
+      - name: Check Code Formatting
+        run: |
+          black --check *.py
+  
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install Dependencies
+        run: |
+          pip install pytest pyspark pandas
+      
+      - name: Run Unit Tests
+        run: |
+          pytest test_transformations.py -v --tb=short
+        
+      # Optional: Coverage Report
+      # Note: --cov=transformations measures only the tested module (transformations.py)
+      - name: Generate Coverage Report
+        if: always()
+        run: |
+          pip install pytest-cov
+          pytest test_transformations.py --cov=transformations --cov-report=xml --cov-report=term
+      
+      - name: Upload Coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false

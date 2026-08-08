@@ -1,0 +1,166 @@
+# ============================================================================
+# CD Workflow - Continuous Deployment
+# ============================================================================
+# Save this file as: .github/workflows/cd.yml
+#
+# Design Decisions:
+#
+# 1. Separate Deploy Jobs for Dev/Prod:
+#    - dev: Automatic on push to main branch
+#    - prod: Manual trigger via workflow_dispatch (approval gate)
+#    - Prevents unwanted production deployments
+#
+# 2. Databricks Asset Bundles (DABs) Deployment:
+#    - databricks bundle deploy: Deploys pipeline + jobs + permissions
+#    - Idempotent: Multiple deploys are safe
+#    - Atomic: All or nothing (no partial deployments)
+#
+# 3. Pipeline Run After Deployment (optional):
+#    - databricks bundle run: Starts pipeline update
+#    - Full refresh behavior is configured in the job task definition
+#      (databricks.yml), not in this workflow
+#
+# 4. Environment Secrets:
+#    - DATABRICKS_HOST, DATABRICKS_TOKEN: Isolated per environment (DEV vs. PROD)
+#    - Least-privilege principle: Only necessary permissions
+#
+# 5. Production Deployment Controls:
+#    - workflow_dispatch: Manual trigger (prevents accidental deploys)
+#    - For true approval gate: Configure GitHub Environment Protection Rules
+#      (Settings → Environments → production → Required reviewers)
+#    - Without protection rules: Any authorized user can trigger manually
+#    - With protection rules: Enforces four-eyes principle before deployment
+# ============================================================================
+
+name: CD - Deploy to Databricks
+
+on:
+  # Automatic dev deployment on push to main
+  push:
+    branches:
+      - main
+  
+  # Manual prod deployment via GitHub UI
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Deployment Target'
+        required: true
+        type: choice
+        options:
+          - dev
+          - prod
+      run_pipeline:
+        description: 'Run pipeline after deployment?'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  # ========================================================================
+  # DEV DEPLOYMENT (Automatic)
+  # ========================================================================
+  deploy-dev:
+    name: Deploy to Development
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'dev')
+    
+    environment:
+      name: development
+      url: https://dbc-4bec34d5-b4c7.cloud.databricks.com
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Setup Databricks CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+      
+      - name: Deploy Bundle to Dev
+        run: |
+          databricks bundle deploy --target dev
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_DEV }}
+      
+      - name: Run Pipeline (Optional)
+        if: github.event.inputs.run_pipeline == 'true'
+        run: |
+          databricks bundle run \
+            --target dev \
+            nyc_taxi_orchestration_job
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_DEV }}
+      
+      - name: Deployment Summary
+        run: |
+          echo "Successfully deployed to Development"
+          echo "Pipeline: nyc_taxi_pipeline_dev"
+          echo "Job: nyc_taxi_orchestration_dev"
+          echo "Catalog: nyc_taxi_dev"
+  
+  # ========================================================================
+  # PROD DEPLOYMENT (Manual with Approval)
+  # ========================================================================
+  deploy-prod:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'prod'
+    
+    environment:
+      name: production
+      url: https://dbc-4bec34d5-b4c7.cloud.databricks.com
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      - name: Setup Databricks CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+      
+      - name: Validate Bundle for Prod
+        run: |
+          databricks bundle validate --target prod
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_PROD }}
+      
+      - name: Deploy Bundle to Prod
+        run: |
+          databricks bundle deploy --target prod
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_PROD }}
+      
+      - name: Run Pipeline (Optional)
+        if: github.event.inputs.run_pipeline == 'true'
+        run: |
+          databricks bundle run \
+            --target prod \
+            nyc_taxi_orchestration_job
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_PROD }}
+      
+      - name: Deployment Summary
+        run: |
+          echo "Successfully deployed to Production"
+          echo "Pipeline: nyc_taxi_pipeline_prod"
+          echo "Job: nyc_taxi_orchestration_prod"
+          echo "Catalog: nyc_taxi_prod"
+      
+      - name: Log Deployment Success
+        if: success()
+        run: |
+          echo "========================================"
+          echo "PRODUCTION DEPLOYMENT SUCCESSFUL"
+          echo "========================================"
+          echo "Deployed by: ${{ github.actor }}"
+          echo "Pipeline: nyc_taxi_pipeline_prod"
+          echo "Job: nyc_taxi_orchestration_prod"
+          echo "Catalog: nyc_taxi_prod"
+          echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "========================================"
