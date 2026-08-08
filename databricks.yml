@@ -88,6 +88,7 @@ targets:
     mode: production
     workspace:
       host: https://dbc-4bec34d5-b4c7.cloud.databricks.com
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
     
     variables:
       catalog: nyc_taxi
